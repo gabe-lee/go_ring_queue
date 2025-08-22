@@ -33,13 +33,13 @@ func New[T any](initCapacity uint32) RingQueue[T] {
 }
 
 // Return the current length of the queue
-func (q RingQueue[T]) Len() uint32 {
-	return q.len
+func (q RingQueue[T]) Len() int {
+	return int(q.len)
 }
 
 // Return the current capacity of the queue
-func (q RingQueue[T]) Cap() uint32 {
-	return q.cap
+func (q RingQueue[T]) Cap() int {
+	return int(q.cap)
 }
 
 // Reset the queue to a state with no data, but retain
@@ -127,7 +127,7 @@ func (q *RingQueue[T]) InreaseWriteIndex(n uint32) {
 }
 
 // Explicitly increase the read index of the queue by n places,
-// without returning any values or increaseing beyong the write index.
+// without returning any values or increaseing beyond the write index.
 //
 // Returns the actual number of places the read index was moved.
 //

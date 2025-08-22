@@ -23,3 +23,5 @@ import "github.com/gabe-lee/go_ring_queue"
 ## Cons
   - Uses `uint32` fields for len, cap, read index, and write index
     - Maximum of 4294967295 values
+  - Cannot safely hold pointers in queue (without keeping some other memory reference to the same item in scope)
+    - The ring queue uses a scalar pointer to the root memory offset `*T` to save space. As a result, the golang GC is unlikely to infer that it represents a slice, and if that slice holds pointers, it may not know that those pointers are still in scope and may free them if no other references to the values exist
