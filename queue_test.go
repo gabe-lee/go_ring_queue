@@ -62,7 +62,7 @@ func FuzzQueue(f *testing.F) {
 		return
 	}
 	var dequeueMany = func(queue *RingQueue[byte], list *[]byte, n byte) (valsQ, valsL []byte) {
-		qnn := min(queue.len, uint32(n))
+		qnn := min(len(queue.data), int(n))
 		valsQ = queue.DequeueMany(qnn)
 		lnn := min(len(*list), int(n))
 		valsL = make([]byte, lnn)
@@ -71,7 +71,7 @@ func FuzzQueue(f *testing.F) {
 		return
 	}
 	var sameState = func(queue RingQueue[byte], list []byte) bool {
-		if len(list) != int(queue.len) {
+		if len(list) != len(queue.data) {
 			return false
 		}
 		qdata := queue.GetDataSlices()

@@ -2,7 +2,6 @@ package go_ring_queue
 
 import (
 	"io"
-	"unsafe"
 )
 
 // Holds a queue of values that are inserted at the end and removed
@@ -10,9 +9,7 @@ import (
 // to efficiently recycle empty space without resizing the queue
 // unless absolutely neccessary
 type RingQueue[T any] struct {
-	ptr  *T
-	len  uint32
-	cap  uint32
+	data []T
 	ridx uint32
 	widx uint32
 }
@@ -20,13 +17,8 @@ type RingQueue[T any] struct {
 // Create a new `RingQueue[T]` with capacity for at least
 // `initCapacity` items
 func New[T any](initCapacity uint32) RingQueue[T] {
-	slice := append(([]T)(nil), make([]T, initCapacity)...)
-	cap := uint32(cap(slice))
-	ptr := unsafe.SliceData(slice)
 	return RingQueue[T]{
-		ptr:  ptr,
-		len:  0,
-		cap:  cap,
+		data: make([]T, 0, initCapacity),
 		ridx: 0,
 		widx: 0,
 	}
@@ -34,18 +26,18 @@ func New[T any](initCapacity uint32) RingQueue[T] {
 
 // Return the current length of the queue
 func (q RingQueue[T]) Len() int {
-	return int(q.len)
+	return len(q.data)
 }
 
 // Return the current capacity of the queue
 func (q RingQueue[T]) Cap() int {
-	return int(q.cap)
+	return cap(q.data)
 }
 
 // Reset the queue to a state with no data, but retain
 // the existing memory capacity
 func (q *RingQueue[T]) Clear() {
-	q.len = 0
+	q.data = q.data[:0]
 	q.ridx = 0
 	q.widx = 0
 }
@@ -53,9 +45,7 @@ func (q *RingQueue[T]) Clear() {
 // Fully deinitialize the queue, releasing the memory pointer
 // for the garbage collecter if no other references to it exist
 func (q *RingQueue[T]) Release() {
-	q.ptr = nil
-	q.cap = 0
-	q.len = 0
+	q.data = nil
 	q.ridx = 0
 	q.widx = 0
 }
@@ -64,20 +54,20 @@ func (q *RingQueue[T]) Release() {
 // the queue. The current queue data may not be aligned
 // to the beginning of the slice
 func (q RingQueue[T]) RawSlice() []T {
-	return unsafe.Slice(q.ptr, q.cap)
+	return q.data[:q.Cap()]
 }
 
 // Returns a new `RingQueue[T]` with a copy of the current data
 func (q RingQueue[T]) Clone() RingQueue[T] {
-	newQueue := New[T](q.cap)
-	slice := newQueue.RawSlice()
+	newSlice := make([]T, q.Len())
 	data := q.GetDataSlices()
-	n := copy(slice, data[0])
-	copy(slice[n:], data[1])
-	newQueue.len = q.len
-	newQueue.ridx = 0
-	newQueue.widx = q.widx
-	return newQueue
+	n := copy(newSlice, data[0])
+	copy(newSlice[n:], data[1])
+	return RingQueue[T]{
+		data: newSlice,
+		widx: uint32(q.Len()),
+		ridx: 0,
+	}
 }
 
 // Return the data slices in-place holding all the current data in the queue.
@@ -86,10 +76,10 @@ func (q RingQueue[T]) Clone() RingQueue[T] {
 // is in the same order that would be expected if using a normal
 // slice/list
 func (q RingQueue[T]) GetDataSlices() [2][]T {
-	slice := unsafe.Slice(q.ptr, q.cap)
-	len_end := q.ridx + q.len
-	c1_end := min(q.cap, len_end)
-	overflow := q.len - (c1_end - q.ridx)
+	slice := q.RawSlice()
+	len_end := int(q.ridx) + q.Len()
+	c1_end := min(q.Cap(), len_end)
+	overflow := q.Len() - (c1_end - int(q.ridx))
 	c1 := slice[q.ridx:c1_end]
 	c2 := slice[0:overflow]
 	return [2][]T{c1, c2}
@@ -101,11 +91,11 @@ func (q RingQueue[T]) GetDataSlices() [2][]T {
 // is in the same order that would be expected if using a normal
 // slice/list
 func (q RingQueue[T]) GetFreeSlices() [2][]T {
-	slice := unsafe.Slice(q.ptr, q.cap)
-	free := q.cap - q.len
-	free_end := q.widx + free
-	c1_end := min(q.cap, free_end)
-	overflow := free - (c1_end - q.widx)
+	slice := q.RawSlice()
+	free := q.Cap() - q.Len()
+	free_end := int(q.widx) + free
+	c1_end := min(q.Cap(), free_end)
+	overflow := free - (c1_end - int(q.widx))
 	c1 := slice[q.widx:c1_end]
 	c2 := slice[0:overflow]
 	return [2][]T{c1, c2}
@@ -119,11 +109,11 @@ func (q RingQueue[T]) GetFreeSlices() [2][]T {
 // to manually write data into the beginning of the free area,
 // or BEFORE using `GetDataSlices()` to manually write the new data to the end
 // of the extended data area
-func (q *RingQueue[T]) InreaseWriteIndex(n uint32) {
+func (q *RingQueue[T]) InreaseWriteIndex(n int) {
 	q.EnsureFreeSpace(n)
-	q.widx += n
-	q.widx %= q.cap
-	q.len += n
+	q.widx += uint32(n)
+	q.widx %= uint32(q.Cap())
+	q.data = q.data[:q.Len()+n]
 }
 
 // Explicitly increase the read index of the queue by n places,
@@ -134,28 +124,25 @@ func (q *RingQueue[T]) InreaseWriteIndex(n uint32) {
 // This is intended for discarding unwanted values,
 // or for use AFTER using `GetDataSlices()`
 // to manually read data from the beginning of the queue.
-func (q *RingQueue[T]) InreaseReadIndex(n uint32) (nActual uint32) {
-	nActual = min(q.len, n)
-	q.ridx += nActual
-	q.ridx %= q.cap
-	q.len -= nActual
+func (q *RingQueue[T]) InreaseReadIndex(n int) (nActual int) {
+	nActual = min(q.Len(), n)
+	q.ridx += uint32(nActual)
+	q.ridx %= uint32(q.Cap())
+	q.data = q.data[:q.Len()-nActual]
 	return
 }
 
 // Ensure the queue has space for at least n more items,
 // resizing if neccessary
-func (q *RingQueue[T]) EnsureFreeSpace(n uint32) {
-	if q.cap-q.len < n {
-		newSlice := append(([]T)(nil), make([]T, q.len+n)...)
-		newCap := uint32(cap(newSlice))
-		newPtr := unsafe.SliceData(newSlice)
+func (q *RingQueue[T]) EnsureFreeSpace(n int) {
+	if q.Cap()-q.Len() < n {
+		newSlice := append(([]T)(nil), make([]T, q.Len()+n)...)
 		oldData := q.GetDataSlices()
 		n := copy(newSlice, oldData[0])
 		copy(newSlice[n:], oldData[1])
-		q.ptr = newPtr
-		q.cap = newCap
+		q.data = newSlice
 		q.ridx = 0
-		q.widx = q.len
+		q.widx = uint32(q.Len())
 	}
 }
 
@@ -163,39 +150,39 @@ func (q *RingQueue[T]) EnsureFreeSpace(n uint32) {
 // if neccessary
 func (q *RingQueue[T]) Queue(val T) {
 	q.EnsureFreeSpace(1)
-	slice := unsafe.Slice(q.ptr, q.cap)
+	slice := q.RawSlice()
 	slice[q.widx] = val
 	q.widx += 1
-	q.widx %= q.cap
-	q.len += 1
+	q.widx %= uint32(q.Cap())
+	q.data = q.data[:q.Len()+1]
 }
 
 // Append all vals to the end of the queue, resizing
 // if neccessary
 func (q *RingQueue[T]) QueueMany(vals ...T) {
-	n := uint32(len(vals))
+	n := len(vals)
 	q.EnsureFreeSpace(n)
 	frees := q.GetFreeSlices()
 	nn := copy(frees[0], vals)
 	copy(frees[1], vals[nn:])
-	q.widx += n
-	q.widx %= q.cap
-	q.len += n
+	q.widx += uint32(n)
+	q.widx %= uint32(q.Cap())
+	q.data = q.data[:q.Len()+n]
 }
 
 // Remove and return the first value at the front of the queue,
 // and a `bool` indicating whether any value existed
 // to return
 func (q *RingQueue[T]) Dequeue() (val T, ok bool) {
-	ok = q.len > 0
+	ok = q.Len() > 0
 	if !ok {
 		return
 	}
-	slice := unsafe.Slice(q.ptr, q.cap)
+	slice := q.RawSlice()
 	val = slice[q.ridx]
 	q.ridx += 1
-	q.ridx %= q.cap
-	q.len -= 1
+	q.ridx %= uint32(q.Cap())
+	q.data = q.data[:q.Len()-1]
 	return
 }
 
@@ -204,14 +191,14 @@ func (q *RingQueue[T]) Dequeue() (val T, ok bool) {
 // If the queue has fewer than `n` items, the length of `vals`
 // will be the previous length of the queue, and the queue
 // will now be empty
-func (q *RingQueue[T]) DequeueMany(n uint32) (vals []T) {
+func (q *RingQueue[T]) DequeueMany(n int) (vals []T) {
 	datas := q.GetDataSlices()
 	vals = make([]T, n)
 	nn := copy(vals, datas[0])
 	nn += copy(vals[nn:], datas[1])
 	q.ridx += uint32(nn)
-	q.ridx %= q.cap
-	q.len -= uint32(nn)
+	q.ridx %= uint32(cap(q.data))
+	q.data = q.data[:q.Len()-nn]
 	vals = vals[:nn]
 	return
 }
@@ -221,13 +208,13 @@ func (q *RingQueue[T]) DequeueMany(n uint32) (vals []T) {
 // dequeued
 //
 // `nCopied = min(n, len(dest), queue.Len())`
-func (q *RingQueue[T]) DequeueManyInto(dest []T, n uint32) (nCopied uint32) {
+func (q *RingQueue[T]) DequeueManyInto(dest []T, n int) (nCopied int) {
 	datas := q.GetDataSlices()
-	nCopied = uint32(copy(dest[:n], datas[0]))
-	nCopied += uint32(copy(dest[nCopied:n], datas[1]))
+	nCopied = copy(dest[:n], datas[0])
+	nCopied += copy(dest[nCopied:n], datas[1])
 	q.ridx += uint32(nCopied)
-	q.ridx %= q.cap
-	q.len -= uint32(nCopied)
+	q.ridx %= uint32(cap(q.data))
+	q.data = q.data[:q.Len()-nCopied]
 	return
 }
 
@@ -235,7 +222,7 @@ func (q *RingQueue[T]) DequeueManyInto(dest []T, n uint32) (nCopied uint32) {
 //
 // Always returns error `io.EOF` if `n < len(p)`
 func (q *RingQueue[T]) Read(p []T) (n int, err error) {
-	n = int(q.DequeueManyInto(p, uint32(len(p))))
+	n = int(q.DequeueManyInto(p, len(p)))
 	if n != len(p) {
 		err = io.EOF
 	}
