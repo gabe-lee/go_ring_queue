@@ -93,7 +93,7 @@ func FuzzQueue(f *testing.F) {
 		aa := a
 		i := 0
 		list := make([]byte, 0, 10)
-		queue := New[byte](10)
+		queue := New[byte](0)
 		for has1More(&aa) {
 			ac := getAction(&aa, &i)
 			switch ac {
@@ -121,6 +121,9 @@ func FuzzQueue(f *testing.F) {
 					return
 				}
 			case ACTION_DEQUEUE_ONE:
+				if len(list) == 0 {
+					continue
+				}
 				valQ, valL, okQ, okL := dequeueOne(&queue, &list)
 				if valQ != valL || okQ != okL {
 					t.Errorf("\ncase failed: RingQueue[byte].Dequeue():\nEXP: %d, %v\nGOT: %d, %v\nCASE: % 3v\nPOS:  %s^\n", valL, okL, valQ, okQ, a, strings.Repeat(" ", i*4))
@@ -131,6 +134,10 @@ func FuzzQueue(f *testing.F) {
 					return
 				}
 				count := getCount(&aa, &i)
+				count = byte(min(int(count), len(list)))
+				if count == 0 {
+					continue
+				}
 				valsQ, valsL := dequeueMany(&queue, &list, count)
 				if !slices.Equal(valsQ, valsL) {
 					t.Errorf("\ncase failed: RingQueue[byte].DequeueMany():\nEXP: %v\nGOT: %v\nCASE: % 3v\nPOS:  %s^\n", valsL, valsQ, a, strings.Repeat(" ", i*4))

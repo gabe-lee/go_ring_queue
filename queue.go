@@ -140,7 +140,7 @@ func (q *RingQueue[T]) EnsureFreeSpace(n int) {
 		oldData := q.GetDataSlices()
 		n := copy(newSlice, oldData[0])
 		copy(newSlice[n:], oldData[1])
-		q.data = newSlice
+		q.data = newSlice[:q.Len()]
 		q.ridx = 0
 		q.widx = uint32(q.Len())
 	}
